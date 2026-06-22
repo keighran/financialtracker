@@ -1,6 +1,9 @@
+import csv
+import io
 import logging
 import time
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List, Optional
 import httpx
@@ -871,6 +874,195 @@ async def delete_budget_item(
     db.delete(item)
     db.commit()
     return {"message": "Budget item deleted"}
+
+# ---------------------------------------------------------------------------
+# BANK CSV ANALYSIS  ->  suggested monthly budget (3-month trend)
+# ---------------------------------------------------------------------------
+
+class CsvAnalyzeRequest(BaseModel):
+    csv_text: str
+
+# (keywords, suggested item name, budget category)
+_CATEGORY_RULES = [
+    (["woolworth", "coles", "aldi", "iga", "supermarket", "foodland", "grocer"], "Groceries", "Expenses"),
+    (["uber eats", "ubereats", "menulog", "doordash", "deliveroo", "mcdonald", "kfc", "hungry jack", "restaurant", "cafe", "coffee", "domino", "pizza", "grill", "sushi", "thai", "kebab"], "Dining & Takeaway", "Fun"),
+    (["bp ", "caltex", "shell", "ampol", "7-eleven", "united petrol", "fuel", "petrol"], "Fuel", "Expenses"),
+    (["uber", "didi", "ola ", "taxi", "opal", "myki", "go card", "translink", "transport"], "Transport", "Expenses"),
+    (["netflix", "spotify", "disney", "stan.", "binge", "youtube premium", "amazon prime", "apple.com/bill", "kayo", "paramount", "audible"], "Subscriptions", "Fun"),
+    (["agl", "origin energy", "energyaustralia", "red energy", "alinta", "electricity", "water corp", "sydney water"], "Utilities", "Expenses"),
+    (["telstra", "optus", "vodafone", "tpg", "aussie broadband", "belong", "internet", "mobile"], "Phone & Internet", "Expenses"),
+    (["mortgage", "home loan"], "Mortgage", "Expenses"),
+    (["rent", "real estate", "property mgmt"], "Rent", "Expenses"),
+    (["insurance", "nrma", "aami", "bupa", "medibank", "ahm "], "Insurance", "Expenses"),
+    (["chemist", "pharmacy", "priceline", "terry white", "medical", "doctor", "dental", "physio"], "Health", "Expenses"),
+    (["gym", "fitness", "f45", "anytime"], "Fitness", "Fun"),
+    (["kmart", "target", "big w", "myer", "david jones", "amazon", "ebay", "jb hi-fi", "jb hifi", "bunnings", "officeworks"], "Shopping", "Expenses"),
+    (["cinema", "hoyts", "ticketek", "ticketmaster", "liquor", "bws", "dan murphy", "bottle", "pub", "bar "], "Entertainment & Going Out", "Fun"),
+    (["qantas", "jetstar", "virgin australia", "airbnb", "booking.com", "hotel", "flight", "expedia"], "Travel & Holiday", "Holiday"),
+]
+
+
+def _categorize(description: str):
+    d = (description or "").lower()
+    for keywords, name, cat in _CATEGORY_RULES:
+        for kw in keywords:
+            if kw in d:
+                return name, cat
+    return "Other", "Other"
+
+
+def _parse_csv_date(s: str):
+    s = (s or "").strip()
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y", "%d %b %Y", "%d/%m/%Y %H:%M", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_amount(s: str):
+    s = (s or "").strip().replace(",", "").replace("$", "")
+    if s in ("", "-"):
+        return None
+    neg = False
+    if s.startswith("(") and s.endswith(")"):  # accounting-style negative
+        neg = True
+        s = s[1:-1]
+    try:
+        v = float(s)
+    except ValueError:
+        return None
+    return -v if neg else v
+
+
+@router.post("/budget/analyze-csv")
+async def analyze_budget_csv(
+    data: CsvAnalyzeRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Parse a bank-export CSV, categorise spending, and return suggested monthly
+    budget items based on the average over the last ~3 months."""
+    text = data.csv_text or ""
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="CSV is empty")
+
+    try:
+        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
+    except Exception:
+        dialect = csv.excel
+    rows = [r for r in csv.reader(io.StringIO(text), dialect) if any(c.strip() for c in r)]
+    if not rows:
+        raise HTTPException(status_code=400, detail="No rows found in CSV")
+
+    header_keys = ("date", "amount", "description", "narrative", "debit", "credit", "details", "transaction", "balance", "memo", "reference")
+    header_l = [h.lower() for h in rows[0]]
+    has_header = any(any(k in h for k in header_keys) for h in header_l)
+    data_rows = rows[1:] if has_header else rows
+
+    date_idx = desc_idx = amount_idx = debit_idx = credit_idx = None
+    if has_header:
+        for i, h in enumerate(header_l):
+            if date_idx is None and "date" in h:
+                date_idx = i
+            if debit_idx is None and "debit" in h:
+                debit_idx = i
+            if credit_idx is None and "credit" in h:
+                credit_idx = i
+            if amount_idx is None and "amount" in h:
+                amount_idx = i
+            if desc_idx is None and any(k in h for k in ("description", "narrative", "details", "transaction", "memo", "reference")):
+                desc_idx = i
+
+    # Infer any missing columns by sampling (also handles header-less files).
+    ncols = max(len(r) for r in rows)
+    if date_idx is None or (amount_idx is None and debit_idx is None) or desc_idx is None:
+        date_score = [0] * ncols
+        num_score = [0] * ncols
+        text_score = [0] * ncols
+        for r in data_rows[:50]:
+            for i in range(min(len(r), ncols)):
+                c = r[i]
+                if _parse_csv_date(c):
+                    date_score[i] += 1
+                elif _parse_amount(c) is not None:
+                    num_score[i] += 1
+                elif c.strip():
+                    text_score[i] += 1
+        if date_idx is None and any(date_score):
+            date_idx = date_score.index(max(date_score))
+        if amount_idx is None and debit_idx is None and any(num_score):
+            amount_idx = num_score.index(max(num_score))
+        if desc_idx is None and any(text_score):
+            desc_idx = text_score.index(max(text_score))
+
+    if desc_idx is None:
+        raise HTTPException(status_code=400, detail="Could not identify a description column in the CSV")
+
+    # Build a list of expense transactions (date, positive spend, description).
+    txns = []
+    for r in data_rows:
+        if desc_idx >= len(r):
+            continue
+        desc = r[desc_idx]
+        dt = _parse_csv_date(r[date_idx]) if (date_idx is not None and date_idx < len(r)) else None
+        spend = None
+        if debit_idx is not None and debit_idx < len(r):
+            dv = _parse_amount(r[debit_idx])
+            if dv:
+                spend = abs(dv)
+        if spend is None and amount_idx is not None and amount_idx < len(r):
+            av = _parse_amount(r[amount_idx])
+            if av is not None and av < 0:  # negative single-column amount = expense
+                spend = -av
+        if not spend or spend <= 0:
+            continue
+        txns.append((dt, spend, desc))
+
+    if not txns:
+        raise HTTPException(status_code=400, detail="No expense (debit) transactions found in the CSV")
+
+    # Restrict to the last ~3 months and work out how many months that spans.
+    dated = [t for t in txns if t[0] is not None]
+    if dated:
+        max_date = max(t[0] for t in dated)
+        cutoff = max_date - timedelta(days=92)
+        window = [t for t in dated if t[0] >= cutoff]
+        n_months = min(max(len({(t[0].year, t[0].month) for t in window}), 1), 3)
+    else:
+        window = txns
+        n_months = 3  # no parseable dates: assume the file covers ~3 months
+
+    agg = defaultdict(lambda: {"total": 0.0, "count": 0, "category": "Other", "merchants": defaultdict(int)})
+    for _dt, spend, desc in window:
+        name, cat = _categorize(desc)
+        a = agg[name]
+        a["total"] += spend
+        a["count"] += 1
+        a["category"] = cat
+        a["merchants"][desc.strip()[:30]] += 1
+
+    suggestions = []
+    for name, a in agg.items():
+        monthly = round(a["total"] / n_months, 2)
+        if monthly <= 0:
+            continue
+        top = sorted(a["merchants"].items(), key=lambda x: -x[1])[:3]
+        suggestions.append({
+            "name": name,
+            "category": a["category"],
+            "monthly_amount": monthly,
+            "transaction_count": a["count"],
+            "sample_merchants": [m for m, _ in top],
+        })
+    suggestions.sort(key=lambda s: -s["monthly_amount"])
+
+    return {
+        "months_analyzed": n_months,
+        "transactions_analyzed": len(window),
+        "suggestions": suggestions,
+    }
+
 
 # ---------------------------------------------------------------------------
 # YEARLY EXPENSES

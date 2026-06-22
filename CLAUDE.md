@@ -93,6 +93,18 @@ free-text symbol/name fields.
   if the coin list can't load. Backend proxy used (not a browser call) to avoid CORS
   and cache once server-side — matches the intended "Live Price Engine" architecture.
 
+### Feature — budget from bank CSV (3-month trend)
+Budget page can upload a bank-export CSV and auto-populate monthly budget items.
+- `api/ledgers.py`: `POST /api/ledgers/budget/analyze-csv` ({csv_text}) — flexible parser
+  (sniffs delimiter; detects or infers date/description/amount/debit columns; handles
+  header and header-less files), keyword categorisation (`_CATEGORY_RULES` → item name +
+  budget category), keeps only debits, restricts to the last ~92 days and averages over
+  the months covered (max 3). Returns suggestions `{name, category, monthly_amount,
+  transaction_count, sample_merchants}`. Returns suggestions only — does not write.
+- `budget/page.tsx`: "Upload Bank CSV" reads the file client-side, posts the text, shows
+  an editable preview (toggle/adjust each category), then creates budget items via the
+  existing `POST /budget/items`.
+
 ### Fixed — "Annual Savings Speed" calculation
 The dashboard figure (from `build_fire_projection`) was wildly wrong:
 - `_monthly_salary` treated `employment_salary` as a *per-pay-packet* amount and scaled
