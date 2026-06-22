@@ -119,7 +119,7 @@ export default function Sidebar() {
           <span style={{ marginLeft: '8px' }}>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 0' }}>
-          <UserButton afterSignOutUrl="/sign-in" />
+          <UserButton />
           <span style={{ fontSize: '0.85rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {user?.fullName || user?.primaryEmailAddress?.emailAddress.split('@')[0]}
           </span>

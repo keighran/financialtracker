@@ -176,7 +176,7 @@ export default function Dashboard() {
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
                   <XAxis dataKey="year" name="Year" stroke="var(--text-secondary)" />
                   <YAxis stroke="var(--text-secondary)" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                  <Tooltip formatter={(value) => [`$${value.toLocaleString()}`, 'Value']} labelFormatter={(label) => `Year ${label}`} />
+                  <Tooltip formatter={(value) => [`$${Number(value ?? 0).toLocaleString()}`, 'Value']} labelFormatter={(label) => `Year ${label}`} />
                   <Area type="monotone" dataKey="net_worth" stroke="var(--accent-color)" strokeWidth={2} fillOpacity={1} fill="url(#colorNw)" name="Projected Net Worth" />
                   <Area type="monotone" dataKey="target_fire_number" stroke="#f59e0b" strokeWidth={1} strokeDasharray="5 5" fill="none" name="Inflated FIRE Target" />
                 </AreaChart>
@@ -209,7 +209,7 @@ export default function Dashboard() {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(v) => `$${v.toLocaleString()}`} />
+                  <Tooltip formatter={(v) => `$${Number(v ?? 0).toLocaleString()}`} />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
