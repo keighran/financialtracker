@@ -1,7 +1,9 @@
 import logging
+import time
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 from pydantic import BaseModel
@@ -29,6 +31,140 @@ def check_account_owner(account_id: int, user_id: int, db: Session) -> Account:
             detail="Account not found or access denied"
         )
     return account
+
+
+# Read schemas that embed the related asset (SQLModel table models do not
+# serialize relationships, so transaction history needs an explicit shape).
+class AssetRead(BaseModel):
+    id: int
+    ticker: str
+    name: str
+    asset_class: str
+
+class TransactionRead(BaseModel):
+    id: int
+    account_id: int
+    type: TransactionType
+    date: datetime
+    units: Optional[Decimal] = None
+    price_per_unit: Optional[Decimal] = None
+    amount: Decimal
+    fees: Decimal
+    franking_percentage: Optional[Decimal] = None
+    is_drp: bool = False
+    notes: Optional[str] = None
+    asset: Optional[AssetRead] = None
+
+
+def _serialize_transactions(txns: List[Transaction], db: Session) -> List[TransactionRead]:
+    """Attach each transaction's asset (batch-loaded) into a read schema."""
+    asset_ids = {t.asset_id for t in txns if t.asset_id is not None}
+    assets_by_id = {}
+    if asset_ids:
+        assets_by_id = {
+            a.id: a
+            for a in db.exec(select(Asset).where(Asset.id.in_(asset_ids))).all()
+        }
+    result = []
+    for t in txns:
+        a = assets_by_id.get(t.asset_id)
+        result.append(TransactionRead(
+            id=t.id,
+            account_id=t.account_id,
+            type=t.type,
+            date=t.date,
+            units=t.units,
+            price_per_unit=t.price_per_unit,
+            amount=t.amount,
+            fees=t.fees,
+            franking_percentage=t.franking_percentage,
+            is_drp=t.is_drp,
+            notes=t.notes,
+            asset=AssetRead(id=a.id, ticker=a.ticker, name=a.name, asset_class=a.asset_class.value) if a else None,
+        ))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# INVESTMENT ACCOUNTS (Brokerage / Crypto)
+# ---------------------------------------------------------------------------
+
+class InvestmentAccountCreate(BaseModel):
+    name: str
+    institution: str = ""
+    asset_class: AssetClass
+    currency: str = "AUD"
+    notes: Optional[str] = None
+
+@router.get("/investment/accounts", response_model=List[Account])
+async def get_investment_accounts(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    statement = select(Account).where(
+        Account.user_id == current_user.id,
+        Account.type.in_([AccountType.BROKERAGE, AccountType.CRYPTO])
+    )
+    return db.exec(statement).all()
+
+@router.post("/investment/accounts", response_model=Account, status_code=status.HTTP_201_CREATED)
+async def create_investment_account(
+    data: InvestmentAccountCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    acc_type = AccountType.CRYPTO if data.asset_class == AssetClass.CRYPTO else AccountType.BROKERAGE
+    account = Account(
+        user_id=current_user.id,
+        name=data.name,
+        type=acc_type,
+        institution=data.institution,
+        currency=data.currency,
+        notes=data.notes
+    )
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+# ---------------------------------------------------------------------------
+# CRYPTO COIN REFERENCE (CoinGecko proxy)
+# ---------------------------------------------------------------------------
+
+# Cache the full coin list in-memory so we hit CoinGecko at most once per TTL
+# (the list is large and shared across all users).
+_coins_cache: dict = {"data": None, "ts": 0.0}
+_COINS_TTL = 86400  # 24h
+
+@router.get("/crypto/coins")
+async def get_crypto_coins(current_user: User = Depends(get_current_user)):
+    """Return the list of known cryptocurrencies ({symbol, name}) from CoinGecko
+    so the frontend can offer a searchable dropdown instead of free-text entry."""
+    now = time.time()
+    if _coins_cache["data"] and (now - _coins_cache["ts"]) < _COINS_TTL:
+        return _coins_cache["data"]
+    try:
+        resp = httpx.get("https://api.coingecko.com/api/v3/coins/list", timeout=20)
+        resp.raise_for_status()
+        coins = resp.json()
+        data = [
+            {"id": c["id"], "symbol": c["symbol"].upper(), "name": c["name"]}
+            for c in coins
+            if c.get("symbol") and c.get("name")
+        ]
+        _coins_cache["data"] = data
+        _coins_cache["ts"] = now
+        return data
+    except Exception as exc:
+        logger.error("Failed to fetch CoinGecko coin list: %s", exc)
+        if _coins_cache["data"]:
+            return _coins_cache["data"]  # serve stale cache if available
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not fetch cryptocurrency list",
+        )
+
 
 # ---------------------------------------------------------------------------
 # CASH LEDGER
@@ -555,7 +691,7 @@ async def get_equities_portfolio(
             
     return result
 
-@router.get("/transactions", response_model=List[Transaction])
+@router.get("/transactions", response_model=List[TransactionRead])
 async def get_transactions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_session)
@@ -564,15 +700,16 @@ async def get_transactions(
         select(Account).where(Account.user_id == current_user.id)
     ).all()
     account_ids = [a.id for a in accounts]
-    
+
     if not account_ids:
         return []
-        
-    return db.exec(
+
+    txns = db.exec(
         select(Transaction)
         .where(Transaction.account_id.in_(account_ids))
         .order_by(Transaction.date.desc())
     ).all()
+    return _serialize_transactions(txns, db)
 
 @router.post("/transactions", response_model=Transaction, status_code=status.HTTP_201_CREATED)
 async def create_transaction(
@@ -627,7 +764,7 @@ class DividendCreate(BaseModel):
     is_drp: bool = False
     notes: Optional[str] = None
 
-@router.get("/dividends", response_model=List[Transaction])
+@router.get("/dividends", response_model=List[TransactionRead])
 async def get_dividends(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_session)
@@ -636,11 +773,11 @@ async def get_dividends(
         select(Account).where(Account.user_id == current_user.id)
     ).all()
     account_ids = [a.id for a in accounts]
-    
+
     if not account_ids:
         return []
-        
-    return db.exec(
+
+    txns = db.exec(
         select(Transaction)
         .where(
             Transaction.account_id.in_(account_ids),
@@ -648,6 +785,7 @@ async def get_dividends(
         )
         .order_by(Transaction.date.desc())
     ).all()
+    return _serialize_transactions(txns, db)
 
 @router.post("/dividends", response_model=Transaction, status_code=status.HTTP_201_CREATED)
 async def create_dividend(

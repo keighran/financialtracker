@@ -25,6 +25,11 @@ export default function CryptoLedger() {
   const [fees, setFees] = useState('0');
   const [notes, setNotes] = useState('');
 
+  // Coin reference list (from CoinGecko via backend) for the searchable picker
+  const [coins, setCoins] = useState<any[]>([]);
+  const [coinQuery, setCoinQuery] = useState('Bitcoin (BTC)');
+  const [showCoinDropdown, setShowCoinDropdown] = useState(false);
+
   useEffect(() => {
     fetchCryptoData();
   }, [user]);
@@ -34,41 +39,27 @@ export default function CryptoLedger() {
     setLoading(true);
     try {
       const token = await getToken();
-      // We can check if a Crypto account exists, else create a default one
-      let accs = await fetchWithAuth('/api/ledgers/cash/accounts', token); // wait, cash returns cash, let's fetch all accounts and filter
-      // Actually we have direct CRUD routes on Backend for Accounts
-      // Let's query all accounts
-      const allAccounts = await fetchWithAuth('/api/ledgers/cash/accounts', token); // let's fetch or adjust
-      // Wait, get_cash_accounts fetches type CASH. Let's adjust api to fetch accounts by type or make a general fetch.
-      // In our backend ledgers.py:
-      // We defined /api/ledgers/cash/accounts, /api/ledgers/properties, /api/ledgers/super/accounts, /api/ledgers/liabilities.
-      // Wait! We did not define /api/ledgers/accounts generally, but we can call cash/accounts or super/accounts or we can add a general accounts endpoint,
-      // or we can use Cash account as a broker account, or we can look up which accounts are type Crypto.
-      // Let's check how to handle crypto account list:
-      // We can query Cash accounts as funding, or we can fetch the portfolio directly from /api/ledgers/equities/portfolio.
-      // Let's see: /api/ledgers/equities/portfolio lists all holdings from accounts with type AccountType.BROKERAGE or AccountType.CRYPTO!
-      // In ledgers.py:
-      // @router.get("/equities/portfolio") fetches BROKERAGE and CRYPTO accounts, computes holdings, and returns them!
-      // That is perfect.
+      // Holdings come from accounts of type Brokerage/Crypto; keep only Crypto.
       const port = await fetchWithAuth('/api/ledgers/equities/portfolio', token);
-      // Filter for crypto
       setPortfolio(port.filter((h: any) => h.asset_class === 'Crypto'));
-      
+
       const txs = await fetchWithAuth('/api/ledgers/transactions', token);
       setTransactions(txs.filter((t: any) => t.asset && t.asset.asset_class === 'Crypto'));
-      
-      // Let's create a default Crypto account on the fly if there isn't one
-      // We can query cash accounts and check if any is named "Crypto Wallet" or type CRYPTO.
-      // Since Cash accounts CRUD is there, let's add a general route for creating a Brokerage/Crypto account on the backend.
-      // Wait! In ledgers.py, create_transaction checks if account exists: check_account_owner(data.account_id, current_user.id, db)
-      // So the user needs a CRYPTO account to associate transactions with.
-      // Let's verify how to fetch or create the CRYPTO account:
-      // In ledgers.py, check_account_owner queries Accounts table. The user can create one, or we can check cash/accounts.
-      // Wait, let's make sure the user can select an account. Let's fetch all Cash accounts and use them, or we can add a default account if empty.
-      // Let's check what accounts are in the database.
-      setAccounts(allAccounts);
-      if (allAccounts.length > 0) {
-        setAccountId(allAccounts[0].id.toString());
+
+      // Funding accounts for crypto are the Crypto-type investment accounts.
+      const investAccounts = await fetchWithAuth('/api/ledgers/investment/accounts', token);
+      const cryptoAccounts = investAccounts.filter((a: any) => a.type === 'Crypto');
+      setAccounts(cryptoAccounts);
+      if (cryptoAccounts.length > 0) {
+        setAccountId(cryptoAccounts[0].id.toString());
+      }
+
+      // Load the coin reference list for the searchable picker (best-effort).
+      try {
+        const coinList = await fetchWithAuth('/api/ledgers/crypto/coins', token);
+        setCoins(coinList);
+      } catch (e) {
+        console.warn('Coin list unavailable, falling back to manual entry.');
       }
     } catch (err) {
       console.error('Error fetching crypto data:', err);
@@ -80,6 +71,8 @@ export default function CryptoLedger() {
   const openAddModal = () => {
     setTokenSymbol('BTC');
     setTokenName('Bitcoin');
+    setCoinQuery('Bitcoin (BTC)');
+    setShowCoinDropdown(false);
     setTxnType('Buy');
     const today = new Date().toISOString().substring(0, 16);
     setDate(today);
@@ -99,13 +92,14 @@ export default function CryptoLedger() {
       // If no account exists, we create a default "Crypto Exchange" account of type CASH or CRYPTO
       let activeAccountId = accountId;
       if (!activeAccountId) {
-        // Create a default account
-        const defAcc = await fetchWithAuth('/api/ledgers/cash/accounts', token, {
+        // Create a default Crypto investment account (type Crypto) so holdings
+        // are picked up by the portfolio and net-worth calculations.
+        const defAcc = await fetchWithAuth('/api/ledgers/investment/accounts', token, {
           method: 'POST',
           body: JSON.stringify({
             name: 'Crypto Exchange Wallet',
             institution: 'Binance / Coinbase',
-            balance: 0,
+            asset_class: 'Crypto',
             currency: 'AUD',
             notes: 'Auto-generated Wallet'
           })
@@ -145,6 +139,24 @@ export default function CryptoLedger() {
   const totalValue = portfolio.reduce((sum, h) => sum + parseFloat(h.market_value), 0);
   const totalCost = portfolio.reduce((sum, h) => sum + parseFloat(h.total_cost), 0);
   const totalGain = totalValue - totalCost;
+
+  const selectCoin = (c: any) => {
+    setTokenSymbol(c.symbol);
+    setTokenName(c.name);
+    setCoinQuery(`${c.name} (${c.symbol})`);
+    setShowCoinDropdown(false);
+  };
+
+  const coinFilter = coinQuery.trim().toLowerCase();
+  const filteredCoins = (
+    coinFilter
+      ? coins.filter(
+          (c) =>
+            c.name.toLowerCase().includes(coinFilter) ||
+            c.symbol.toLowerCase().includes(coinFilter)
+        )
+      : coins
+  ).slice(0, 50);
 
   return (
     <div>
@@ -279,30 +291,62 @@ export default function CryptoLedger() {
           <div className="modal-content">
             <h3 style={{ fontSize: '1.25rem', marginBottom: '24px' }}>Record Cryptocurrency Transaction</h3>
             <form onSubmit={handleSubmit}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <div className="form-group">
-                  <label className="form-label">Token Symbol</label>
+              {coins.length > 0 ? (
+                <div className="form-group" style={{ position: 'relative' }}>
+                  <label className="form-label">Cryptocurrency</label>
                   <input
                     type="text"
                     className="form-input"
-                    value={tokenSymbol}
-                    onChange={(e) => setTokenSymbol(e.target.value.toUpperCase())}
-                    placeholder="e.g. BTC, ETH"
-                    required
+                    value={coinQuery}
+                    onChange={(e) => { setCoinQuery(e.target.value); setShowCoinDropdown(true); }}
+                    onFocus={() => setShowCoinDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowCoinDropdown(false), 150)}
+                    placeholder="Search by name or symbol (e.g. Bitcoin, BTC)"
+                    autoComplete="off"
                   />
+                  {showCoinDropdown && filteredCoins.length > 0 && (
+                    <div style={{ position: 'absolute', zIndex: 20, top: '100%', left: 0, right: 0, maxHeight: '220px', overflowY: 'auto', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '6px', marginTop: '4px', boxShadow: 'var(--card-shadow)' }}>
+                      {filteredCoins.map((c) => (
+                        <div
+                          key={c.id}
+                          onMouseDown={() => selectCoin(c)}
+                          style={{ padding: '8px 12px', cursor: 'pointer', fontSize: '0.9rem', borderBottom: '1px solid var(--border-color)' }}
+                        >
+                          <strong>{c.symbol}</strong> <span style={{ color: 'var(--text-secondary)' }}>— {c.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                    Selected: <strong>{tokenSymbol}</strong> ({tokenName})
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label className="form-label">Token Name</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    value={tokenName}
-                    onChange={(e) => setTokenName(e.target.value)}
-                    placeholder="e.g. Bitcoin, Ethereum"
-                    required
-                  />
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Token Symbol</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={tokenSymbol}
+                      onChange={(e) => setTokenSymbol(e.target.value.toUpperCase())}
+                      placeholder="e.g. BTC, ETH"
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Token Name</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={tokenName}
+                      onChange={(e) => setTokenName(e.target.value)}
+                      placeholder="e.g. Bitcoin, Ethereum"
+                      required
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div className="form-group">
