@@ -3,6 +3,33 @@ from datetime import datetime
 from typing import List, Dict, Any
 from app.models.models import Transaction, TransactionType
 
+
+def calculate_income_tax(annual_income: Decimal) -> Decimal:
+    """Progressive Australian resident income tax (Stage 3 brackets, 2024-25+)
+    plus a flat 2% Medicare levy. Used to estimate take-home pay for the savings
+    projection. Simplified: ignores Medicare low-income thresholds, LITO, HELP, etc."""
+    income = annual_income if annual_income and annual_income > 0 else Decimal("0")
+    # (upper bound of bracket, marginal rate)
+    schedule = [
+        (Decimal("18200"), Decimal("0.00")),
+        (Decimal("45000"), Decimal("0.16")),
+        (Decimal("135000"), Decimal("0.30")),
+        (Decimal("190000"), Decimal("0.37")),
+    ]
+    tax = Decimal("0")
+    prev = Decimal("0")
+    for cap, rate in schedule:
+        if income > cap:
+            tax += (cap - prev) * rate
+            prev = cap
+        else:
+            tax += (income - prev) * rate
+            return tax + income * Decimal("0.02")
+    # Income above the top threshold
+    tax += (income - prev) * Decimal("0.45")
+    return tax + income * Decimal("0.02")
+
+
 def calculate_cgt_fifo(transactions: List[Transaction], is_super: bool = False) -> Dict[str, Any]:
     buys = []
     # sort transactions chronologically

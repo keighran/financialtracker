@@ -93,6 +93,21 @@ free-text symbol/name fields.
   if the coin list can't load. Backend proxy used (not a browser call) to avoid CORS
   and cache once server-side — matches the intended "Live Price Engine" architecture.
 
+### Fixed — "Annual Savings Speed" calculation
+The dashboard figure (from `build_fire_projection`) was wildly wrong:
+- `_monthly_salary` treated `employment_salary` as a *per-pay-packet* amount and scaled
+  it by pay frequency, but onboarding stores it as an **annual** figure — inflating it
+  ~26× (fortnightly) / 12× (monthly). Also surfaced as the onboarding "select Monthly →
+  treated as monthly" bug.
+- Savings used **gross** salary (no income tax) and only subtracted budget items tagged
+  `"expenses"` (ignoring Fun/Holiday/Other and yearly expenses).
+
+Fix:
+- `tax_fire.py`: added `calculate_income_tax` (progressive Stage 3 brackets + 2% Medicare).
+- `projections.py`: `monthly_after_tax_salary = (salary − tax) / 12` (frequency no longer
+  scales salary); subtract all non-"Savings" budget items + amortised yearly expenses;
+  add average side income. `pay_frequency` no longer affects the savings math.
+
 ### Fixed / Feature — onboarding journey
 The 3-step wizard and `/api/onboarding/complete` existed but were never triggered for
 first-time users (no redirect, no status endpoint), so onboarding appeared inactive.
