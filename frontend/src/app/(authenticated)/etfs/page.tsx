@@ -34,12 +34,14 @@ export default function ETFsLedger() {
     setLoading(true);
     try {
       const token = await getToken();
-      const allAccounts = await fetchWithAuth('/api/ledgers/cash/accounts', token);
-      setAccounts(allAccounts);
-      if (allAccounts.length > 0) {
-        setAccountId(allAccounts[0].id.toString());
+      // Brokerage-type investment accounts fund ETF transactions.
+      const investAccounts = await fetchWithAuth('/api/ledgers/investment/accounts', token);
+      const brokerageAccounts = investAccounts.filter((a: any) => a.type === 'Brokerage');
+      setAccounts(brokerageAccounts);
+      if (brokerageAccounts.length > 0) {
+        setAccountId(brokerageAccounts[0].id.toString());
       }
-      
+
       const port = await fetchWithAuth('/api/ledgers/equities/portfolio', token);
       setPortfolio(port.filter((h: any) => h.asset_class === 'ETF'));
       
@@ -72,12 +74,12 @@ export default function ETFsLedger() {
       const token = await getToken();
       let activeAccountId = accountId;
       if (!activeAccountId) {
-        const defAcc = await fetchWithAuth('/api/ledgers/cash/accounts', token, {
+        const defAcc = await fetchWithAuth('/api/ledgers/investment/accounts', token, {
           method: 'POST',
           body: JSON.stringify({
             name: 'Primary Brokerage Account',
             institution: 'CommSec / Selfwealth',
-            balance: 0,
+            asset_class: 'ETF',
             currency: 'AUD',
             notes: 'Main Share Broker Account'
           })
