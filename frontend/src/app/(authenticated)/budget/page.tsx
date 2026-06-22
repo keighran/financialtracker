@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useUser, useAuth } from '@clerk/nextjs';
 import { fetchWithAuth } from '@/lib/api';
-import { PieChart, Plus, Trash2, HelpCircle } from 'lucide-react';
+import { PieChart, Plus, Trash2, HelpCircle, Upload, Sparkles } from 'lucide-react';
 
 export default function BudgetPlanner() {
   const { user } = useUser();
@@ -21,6 +21,14 @@ export default function BudgetPlanner() {
   const [showYearlyModal, setShowYearlyModal] = useState(false);
   const [yearlyName, setYearlyName] = useState('');
   const [yearlyAmount, setYearlyAmount] = useState('');
+
+  // CSV analysis
+  const [showCsvModal, setShowCsvModal] = useState(false);
+  const [csvLoading, setCsvLoading] = useState(false);
+  const [csvError, setCsvError] = useState('');
+  const [csvMeta, setCsvMeta] = useState<{ months_analyzed: number; transactions_analyzed: number } | null>(null);
+  const [csvSuggestions, setCsvSuggestions] = useState<any[]>([]);
+  const [csvApplying, setCsvApplying] = useState(false);
 
   // Salary context (from user settings)
   const [salary, setSalary] = useState(0);
@@ -116,6 +124,65 @@ export default function BudgetPlanner() {
     }
   };
 
+  const handleCsvFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-uploading the same file
+    if (!file || !user) return;
+    setCsvLoading(true);
+    setCsvError('');
+    setCsvSuggestions([]);
+    setCsvMeta(null);
+    setShowCsvModal(true);
+    try {
+      const csvText = await file.text();
+      const token = await getToken();
+      const res = await fetchWithAuth('/api/ledgers/budget/analyze-csv', token, {
+        method: 'POST',
+        body: JSON.stringify({ csv_text: csvText }),
+      });
+      setCsvMeta({ months_analyzed: res.months_analyzed, transactions_analyzed: res.transactions_analyzed });
+      setCsvSuggestions((res.suggestions || []).map((s: any) => ({ ...s, include: true, amount: String(s.monthly_amount) })));
+    } catch (err: any) {
+      setCsvError(err.message || 'Could not analyse the CSV file.');
+    } finally {
+      setCsvLoading(false);
+    }
+  };
+
+  const updateSuggestion = (idx: number, patch: any) => {
+    setCsvSuggestions((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  };
+
+  const applyCsvSuggestions = async () => {
+    if (!user) return;
+    const toApply = csvSuggestions.filter((s) => s.include && parseFloat(s.amount) > 0);
+    if (toApply.length === 0) {
+      setShowCsvModal(false);
+      return;
+    }
+    setCsvApplying(true);
+    try {
+      const token = await getToken();
+      for (const s of toApply) {
+        await fetchWithAuth('/api/ledgers/budget/items', token, {
+          method: 'POST',
+          body: JSON.stringify({
+            name: s.name,
+            category: s.category,
+            monthly_amount: parseFloat(s.amount),
+          }),
+        });
+      }
+      setShowCsvModal(false);
+      fetchBudgetData();
+    } catch (err) {
+      console.error('Error applying CSV suggestions:', err);
+      setCsvError('Failed to save some budget items.');
+    } finally {
+      setCsvApplying(false);
+    }
+  };
+
   // Calculations
   const monthlySalary = salary; // Stored as monthly equivalent on backend / onboarding completes
   const totalPlannedSpend = budgetItems
@@ -139,6 +206,10 @@ export default function BudgetPlanner() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
+          <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
+            <Upload size={18} /> Upload Bank CSV
+            <input type="file" accept=".csv,text/csv" onChange={handleCsvFile} style={{ display: 'none' }} />
+          </label>
           <button className="btn btn-secondary" onClick={() => setShowYearlyModal(true)}>
             + Add Yearly Expense
           </button>
@@ -354,6 +425,95 @@ export default function BudgetPlanner() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showCsvModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '720px', width: '100%' }}>
+            <h3 style={{ fontSize: '1.25rem', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Sparkles size={20} style={{ color: 'var(--accent-color)' }} /> Suggested Budget from Bank CSV
+            </h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '20px' }}>
+              We categorise your spending and average it over the last 3 months. Review, tweak, and apply.
+            </p>
+
+            {csvLoading && (
+              <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                Analysing transactions...
+              </div>
+            )}
+
+            {csvError && (
+              <div className="alert alert-info" style={{ borderColor: 'var(--error-color)', color: 'var(--error-color)', backgroundColor: 'rgba(220, 38, 38, 0.1)' }}>
+                {csvError}
+              </div>
+            )}
+
+            {!csvLoading && !csvError && csvSuggestions.length > 0 && (
+              <>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                  Analysed {csvMeta?.transactions_analyzed} expense transactions over ~{csvMeta?.months_analyzed} month(s).
+                </div>
+                <div className="table-container" style={{ maxHeight: '360px', overflowY: 'auto' }}>
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '40px' }}></th>
+                        <th>Category</th>
+                        <th>Type</th>
+                        <th>Txns</th>
+                        <th>Monthly $</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {csvSuggestions.map((s, idx) => (
+                        <tr key={s.name} style={{ opacity: s.include ? 1 : 0.5 }}>
+                          <td>
+                            <input type="checkbox" checked={s.include} onChange={(e) => updateSuggestion(idx, { include: e.target.checked })} />
+                          </td>
+                          <td>
+                            <strong>{s.name}</strong>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                              {(s.sample_merchants || []).join(', ')}
+                            </div>
+                          </td>
+                          <td>{s.category}</td>
+                          <td>{s.transaction_count}</td>
+                          <td>
+                            <input
+                              type="number"
+                              className="form-input"
+                              value={s.amount}
+                              onChange={(e) => updateSuggestion(idx, { amount: e.target.value })}
+                              style={{ width: '110px', padding: '6px 8px' }}
+                              step="0.01"
+                              min="0"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            {!csvLoading && !csvError && csvSuggestions.length === 0 && (
+              <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                No spending categories detected.
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '16px', marginTop: '24px' }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setShowCsvModal(false)} style={{ flex: 1 }} disabled={csvApplying}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-primary" onClick={applyCsvSuggestions} style={{ flex: 2 }} disabled={csvApplying || csvLoading || csvSuggestions.length === 0}>
+                {csvApplying ? 'Adding...' : 'Apply Selected to Budget'}
+              </button>
+            </div>
           </div>
         </div>
       )}
