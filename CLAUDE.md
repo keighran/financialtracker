@@ -93,6 +93,17 @@ free-text symbol/name fields.
   if the coin list can't load. Backend proxy used (not a browser call) to avoid CORS
   and cache once server-side — matches the intended "Live Price Engine" architecture.
 
+### Fixed / Feature — onboarding journey
+The 3-step wizard and `/api/onboarding/complete` existed but were never triggered for
+first-time users (no redirect, no status endpoint), so onboarding appeared inactive.
+- `api/onboarding.py`: added `GET /api/onboarding/status` → `{has_completed_onboarding, is_superadmin}`.
+- `(authenticated)/layout.tsx`: guard checks the status on entry to any authenticated
+  page and `router.replace('/onboarding')` if incomplete. Fails open if the check errors;
+  no redirect loop since `/onboarding` lives outside the `(authenticated)` route group.
+- `onboarding/page.tsx`: expanded from 3 steps to 7 — income, FIRE targets, age, then
+  optional cash / super / liabilities seeding (via existing ledger endpoints), then a
+  review step. `/api/onboarding/complete` is posted last (it sets the completion flag).
+
 ## Deployment (QNAP NAS — 192.168.50.100)
 - Deployed via Container Station (docker + compose v2.29) under `/share/Container/fire`.
 - Access: frontend http://192.168.50.100:3000, backend http://192.168.50.100:8000, db :5432.

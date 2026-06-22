@@ -11,6 +11,19 @@ from app.models.models import User, UserSettings, PayFrequency, CGTMethod
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
+
+@router.get("/status")
+async def onboarding_status(
+    current_user: User = Depends(get_current_user),
+):
+    """Lightweight check used by the frontend to gate first-time users into the
+    onboarding wizard."""
+    return {
+        "has_completed_onboarding": current_user.has_completed_onboarding,
+        "is_superadmin": current_user.is_superadmin,
+    }
+
+
 class OnboardingRequest(BaseModel):
     employment_salary: Decimal
     pay_frequency: PayFrequency
