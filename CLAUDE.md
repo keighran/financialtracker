@@ -55,12 +55,13 @@ gearing) and FIRE projections.
   `useAuth().getToken()` (the current Clerk async API). Added `useAuth` import and
   `const { getToken } = useAuth();` alongside existing `useUser()`.
 
-## Known pre-existing issues (NOT yet fixed — will block `next build`)
-- `frontend/src/app/page.tsx:5` and `frontend/src/middleware.ts:12`: Clerk `auth()` is
-  async in this SDK version — call sites need `await auth()`.
-- `frontend/src/components/Sidebar.tsx:122`: `afterSignOutUrl` prop no longer valid on `<UserButton>`.
-- `frontend/src/app/(authenticated)/dashboard/page.tsx:179,212`: Recharts formatter args
-  possibly `undefined`.
+### Fixed — TypeScript build errors (Clerk SDK upgrade fallout)
+- `app/page.tsx` / `middleware.ts`: Clerk `auth()` is async in this SDK — `await auth()`
+  (and `auth.protect()` in middleware).
+- `app/layout.tsx` + `components/Sidebar.tsx`: moved `afterSignOutUrl` to `<ClerkProvider>`
+  (prop removed from `<UserButton>`).
+- `dashboard/page.tsx`: guarded Recharts formatter args against `undefined`.
+- `npx tsc --noEmit` now passes clean; `next build` is unblocked.
 
 ## Conventions
 - Verify backend edits with `python -m py_compile <files>`; frontend with `npx tsc --noEmit`.
