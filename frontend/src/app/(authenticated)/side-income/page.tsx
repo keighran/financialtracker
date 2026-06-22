@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { fetchWithAuth } from '@/lib/api';
 import { ArrowUpRight, Plus, Trash2 } from 'lucide-react';
 
 export default function SideIncomeLedger() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -25,7 +26,7 @@ export default function SideIncomeLedger() {
     if (!user) return;
     setLoading(true);
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const data = await fetchWithAuth('/api/ledgers/side-income', token);
       setLogs(data);
     } catch (err) {
@@ -48,7 +49,7 @@ export default function SideIncomeLedger() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth('/api/ledgers/side-income', token, {
         method: 'POST',
         body: JSON.stringify({
@@ -68,7 +69,7 @@ export default function SideIncomeLedger() {
   const handleDelete = async (id: number) => {
     if (!user || !confirm('Are you sure you want to delete this log?')) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth(`/api/ledgers/side-income/${id}`, token, {
         method: 'DELETE'
       });

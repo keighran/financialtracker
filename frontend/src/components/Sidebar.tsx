@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useUser, UserButton } from '@clerk/nextjs';
+import { useUser, UserButton, useAuth } from '@clerk/nextjs';
 import {
   LayoutDashboard,
   DollarSign,
@@ -27,6 +27,7 @@ import { fetchWithAuth } from '@/lib/api';
 export default function Sidebar() {
   const pathname = usePathname();
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [theme, setTheme] = useState('dark');
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
@@ -43,7 +44,7 @@ export default function Sidebar() {
         // We can request user metadata or run a simple query to /api/dashboard/net-worth
         // which returns current settings and lets us check is_superadmin via database records.
         // For security, checking database records is much safer.
-        const token = await user.getToken();
+        const token = await getToken();
         // Just fetch a basic api or use Clerk public metadata if set
         // Let's call /api/admin/users - if it doesn't fail, they are admin.
         // Even simpler: the user object itself might have is_superadmin check

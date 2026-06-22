@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { fetchWithAuth } from '@/lib/api';
 import { CreditCard, Check, Sparkles, AlertCircle } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 
 export default function Billing() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const searchParams = useSearchParams();
   const [loadingTier, setLoadingTier] = useState<string | null>(null);
   const [subStatus, setSubStatus] = useState<any>(null);
@@ -30,7 +31,7 @@ export default function Billing() {
     if (!user) return;
     setLoading(true);
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       // Fetch user profile settings containing subscription status
       const data = await fetchWithAuth('/api/dashboard/net-worth', token);
       // Let's assume the subscription status is returned inside that or we can get it from there
@@ -46,7 +47,7 @@ export default function Billing() {
     if (!user) return;
     setLoadingTier(tier);
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const res = await fetchWithAuth('/api/billing/checkout?tier=' + tier, token, {
         method: 'POST'
       });
@@ -64,7 +65,7 @@ export default function Billing() {
   const handlePortal = async () => {
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const res = await fetchWithAuth('/api/billing/portal', token, {
         method: 'POST'
       });

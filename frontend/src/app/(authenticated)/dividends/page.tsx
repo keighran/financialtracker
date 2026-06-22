@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { fetchWithAuth } from '@/lib/api';
 import { Award, Plus, HelpCircle } from 'lucide-react';
 
 export default function DividendsLedger() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [dividends, setDividends] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [portfolio, setPortfolio] = useState<any[]>([]);
@@ -31,7 +32,7 @@ export default function DividendsLedger() {
     if (!user) return;
     setLoading(true);
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const allAccounts = await fetchWithAuth('/api/ledgers/cash/accounts', token);
       setAccounts(allAccounts);
       if (allAccounts.length > 0) {
@@ -71,7 +72,7 @@ export default function DividendsLedger() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       
       await fetchWithAuth('/api/ledgers/dividends', token, {
         method: 'POST',

@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { fetchWithAuth } from '@/lib/api';
 import { Landmark, Plus, Trash2, Edit3 } from 'lucide-react';
 
 export default function CashLedger() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -27,7 +28,7 @@ export default function CashLedger() {
     if (!user) return;
     setLoading(true);
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const data = await fetchWithAuth('/api/ledgers/cash/accounts', token);
       setAccounts(data);
     } catch (err) {
@@ -61,7 +62,7 @@ export default function CashLedger() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const body = {
         name,
         institution,
@@ -92,7 +93,7 @@ export default function CashLedger() {
   const handleDelete = async (id: number) => {
     if (!user || !confirm('Are you sure you want to delete this cash account?')) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth(`/api/ledgers/cash/accounts/${id}`, token, {
         method: 'DELETE'
       });

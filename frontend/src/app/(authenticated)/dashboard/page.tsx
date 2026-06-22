@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import {
   AreaChart,
   Area,
@@ -20,6 +20,7 @@ import { Landmark, ArrowUpRight, TrendingUp, Sparkles, HelpCircle, Activity } fr
 
 export default function Dashboard() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [nwData, setNwData] = useState<any>(null);
@@ -36,12 +37,12 @@ export default function Dashboard() {
     if (!user) return;
     setLoading(true);
     try {
-      const token = await user.getToken();
-      const nw = await fetchWithAuth('/api/dashboard/net-worth', token);
-      setNwData(nw);
-      
-      const fire = await fetchWithAuth('/api/tax-projections/fire', token);
-      setFireData(fire);
+      const token = await getToken();
+      // Single combined endpoint returns net worth + settings + FIRE projection,
+      // with net worth computed once on the backend.
+      const overview = await fetchWithAuth('/api/dashboard/overview', token);
+      setNwData(overview);
+      setFireData(overview.fire);
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
     } finally {
@@ -54,7 +55,7 @@ export default function Dashboard() {
     setSnapshotLoading(true);
     setMsg('');
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth('/api/dashboard/snapshot', token, { method: 'POST' });
       setMsg('Monthly wealth snapshot recorded successfully!');
     } catch (err: any) {

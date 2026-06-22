@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { fetchWithAuth } from '@/lib/api';
 import { Coins, Plus, Trash2 } from 'lucide-react';
 
 export default function CryptoLedger() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [portfolio, setPortfolio] = useState<any[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -32,7 +33,7 @@ export default function CryptoLedger() {
     if (!user) return;
     setLoading(true);
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       // We can check if a Crypto account exists, else create a default one
       let accs = await fetchWithAuth('/api/ledgers/cash/accounts', token); // wait, cash returns cash, let's fetch all accounts and filter
       // Actually we have direct CRUD routes on Backend for Accounts
@@ -93,7 +94,7 @@ export default function CryptoLedger() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       
       // If no account exists, we create a default "Crypto Exchange" account of type CASH or CRYPTO
       let activeAccountId = accountId;

@@ -503,11 +503,20 @@ async def get_equities_portfolio(
         .where(Transaction.account_id.in_(account_ids))
         .order_by(Transaction.date.asc())
     ).all()
-    
+
+    # Batch-load every referenced asset in one query (avoids N+1).
+    asset_ids = {t.asset_id for t in txns if t.asset_id is not None}
+    assets_by_id = {}
+    if asset_ids:
+        assets_by_id = {
+            a.id: a
+            for a in db.exec(select(Asset).where(Asset.id.in_(asset_ids))).all()
+        }
+
     # Calculate holdings
     holdings = {}
     for t in txns:
-        asset = db.get(Asset, t.asset_id)
+        asset = assets_by_id.get(t.asset_id)
         if not asset:
             continue
         ticker = asset.ticker

@@ -11,9 +11,10 @@ from app.models.models import (
     AccountType, Asset, PayFrequency, BudgetItem, SideIncomeLog
 )
 from app.services.tax_fire import (
-    calculate_cgt_fifo, calculate_dividend_tax, calculate_negative_gearing, project_fire_timeline
+    calculate_cgt_fifo, calculate_dividend_tax, calculate_negative_gearing
 )
 from app.services.aggregation import calculate_current_net_worth
+from app.services.projections import build_fire_projection
 
 router = APIRouter(prefix="/tax-projections", tags=["tax-projections"])
 
@@ -25,28 +26,26 @@ async def get_cgt_calculation(
 ):
     accounts = db.exec(select(Account).where(Account.user_id == current_user.id)).all()
     account_ids = [a.id for a in accounts]
-    
+
     if not account_ids:
         return {"total_gain": 0.0, "total_discounted_gain": 0.0, "remaining_holdings": []}
-        
-    txns = db.exec(
-        select(Transaction)
-        .where(Transaction.account_id.in_(account_ids))
+
+    # Resolve the asset by ticker first, then pull only its transactions at the
+    # DB level (avoids loading every transaction and lazy-loading each asset).
+    asset = db.exec(select(Asset).where(Asset.ticker == ticker)).first()
+    if not asset:
+        return {"total_gain": 0.0, "total_discounted_gain": 0.0, "remaining_holdings": []}
+
+    filtered_txns = db.exec(
+        select(Transaction).where(
+            Transaction.account_id.in_(account_ids),
+            Transaction.asset_id == asset.id,
+        )
     ).all()
-    
-    # Filter for ticker and sort
-    filtered_txns = []
-    for t in txns:
-        if t.asset and t.asset.ticker == ticker:
-            filtered_txns.append(t)
-            
-    is_super = False
-    super_accounts = [a.id for a in accounts if a.type == AccountType.SUPER]
-    for t in filtered_txns:
-        if t.account_id in super_accounts:
-            is_super = True
-            break
-            
+
+    super_account_ids = {a.id for a in accounts if a.type == AccountType.SUPER}
+    is_super = any(t.account_id in super_account_ids for t in filtered_txns)
+
     cgt_result = calculate_cgt_fifo(filtered_txns, is_super=is_super)
     return cgt_result
 
@@ -71,14 +70,24 @@ async def get_dividends_tax_summary(
     
     settings = db.exec(select(UserSettings).where(UserSettings.user_id == current_user.id)).first()
     marginal_tax_rate = settings.marginal_tax_rate if settings else Decimal("0.325")
-    
+
+    # Batch-load referenced assets in one query (avoids lazy-loading per dividend).
+    asset_ids = {t.asset_id for t in div_txns if t.asset_id is not None}
+    assets_by_id = {}
+    if asset_ids:
+        assets_by_id = {
+            a.id: a
+            for a in db.exec(select(Asset).where(Asset.id.in_(asset_ids))).all()
+        }
+
     summary = []
     for t in div_txns:
         franking = t.franking_percentage or Decimal("0.00")
         calc = calculate_dividend_tax(t.amount, franking, marginal_tax_rate)
+        asset = assets_by_id.get(t.asset_id)
         summary.append({
             "id": t.id,
-            "ticker": t.asset.ticker if t.asset else "Unknown",
+            "ticker": asset.ticker if asset else "Unknown",
             "date": t.date,
             "net_amount": t.amount,
             "franking_credit": calc["franking_credit"],
@@ -141,56 +150,5 @@ async def get_fire_projection(
         
     net_worth_details = calculate_current_net_worth(current_user.id, db)
     current_nw = net_worth_details["net_worth"]
-    
-    # Calculate monthly income
-    freq = settings.pay_frequency
-    monthly_salary = Decimal("0.00")
-    if freq == PayFrequency.WEEKLY:
-        monthly_salary = settings.employment_salary * Decimal("52") / Decimal("12")
-    elif freq == PayFrequency.FORTNIGHTLY:
-        monthly_salary = settings.employment_salary * Decimal("26") / Decimal("12")
-    elif freq == PayFrequency.MONTHLY:
-        monthly_salary = settings.employment_salary
-    else:
-        monthly_salary = settings.employment_salary * Decimal("26") / Decimal("12")
-        
-    # Calculate savings from budget
-    budget_items = db.exec(select(BudgetItem).where(BudgetItem.user_id == current_user.id)).all()
-    monthly_budget_spend = sum(i.monthly_amount for i in budget_items if i.category.lower() == "expenses")
-    
-    # Side income logs average
-    side_logs = db.exec(select(SideIncomeLog).where(SideIncomeLog.user_id == current_user.id)).all()
-    avg_side_income = Decimal("0.00")
-    if side_logs:
-        total_side = sum(l.side_income_1 + l.rental_income_1 for l in side_logs)
-        avg_side_income = total_side / len(side_logs)
-        
-    total_monthly_savings = (monthly_salary - monthly_budget_spend) + avg_side_income
-    if total_monthly_savings < 0:
-        total_monthly_savings = Decimal("0.00")
-        
-    annual_savings = total_monthly_savings * Decimal("12")
-    
-    # Compound parameters
-    return_rate = settings.fire_investment_return_rate
-    inflation = settings.fire_inflation_rate
-    target_spend = settings.fire_target_annual_spend
-    swr = settings.fire_safe_withdrawal_rate
-    
-    proj = project_fire_timeline(
-        current_net_worth=current_nw,
-        annual_savings=annual_savings,
-        annual_return_rate=return_rate,
-        inflation_rate=inflation,
-        target_annual_spend=target_spend,
-        safe_withdrawal_rate=swr,
-        years=40
-    )
-    return {
-        "current_net_worth": current_nw,
-        "annual_savings": annual_savings,
-        "target_spend": target_spend,
-        "fire_number": proj["fire_number_today"],
-        "fire_year": proj["fire_year"],
-        "projection": proj["projection"]
-    }
+
+    return build_fire_projection(current_user.id, db, current_nw)
