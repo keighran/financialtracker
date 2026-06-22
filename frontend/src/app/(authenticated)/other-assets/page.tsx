@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { fetchWithAuth } from '@/lib/api';
 import { Briefcase, Plus, Trash2, Edit3 } from 'lucide-react';
 
 export default function OtherAssetsLedger() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [assets, setAssets] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -26,7 +27,7 @@ export default function OtherAssetsLedger() {
     if (!user) return;
     setLoading(true);
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const data = await fetchWithAuth('/api/ledgers/other-assets', token);
       setAssets(data);
     } catch (err) {
@@ -58,7 +59,7 @@ export default function OtherAssetsLedger() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const body = {
         name,
         institution,
@@ -88,7 +89,7 @@ export default function OtherAssetsLedger() {
   const handleDelete = async (id: number) => {
     if (!user || !confirm('Are you sure you want to delete this asset?')) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth(`/api/ledgers/other-assets/${id}`, token, {
         method: 'DELETE'
       });

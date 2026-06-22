@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { fetchWithAuth } from '@/lib/api';
 import { PieChart, Plus, Trash2, HelpCircle } from 'lucide-react';
 
 export default function BudgetPlanner() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [budgetItems, setBudgetItems] = useState<any[]>([]);
   const [yearlyExpenses, setYearlyExpenses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,7 +34,7 @@ export default function BudgetPlanner() {
     if (!user) return;
     setLoading(true);
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const items = await fetchWithAuth('/api/ledgers/budget/items', token);
       setBudgetItems(items);
       
@@ -54,7 +55,7 @@ export default function BudgetPlanner() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth('/api/ledgers/budget/items', token, {
         method: 'POST',
         body: JSON.stringify({
@@ -74,7 +75,7 @@ export default function BudgetPlanner() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth('/api/ledgers/budget/yearly', token, {
         method: 'POST',
         body: JSON.stringify({
@@ -92,7 +93,7 @@ export default function BudgetPlanner() {
   const handleItemDelete = async (id: number) => {
     if (!user || !confirm('Delete budget item?')) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth(`/api/ledgers/budget/items/${id}`, token, {
         method: 'DELETE'
       });
@@ -105,7 +106,7 @@ export default function BudgetPlanner() {
   const handleYearlyDelete = async (id: number) => {
     if (!user || !confirm('Delete yearly expense?')) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth(`/api/ledgers/budget/yearly/${id}`, token, {
         method: 'DELETE'
       });

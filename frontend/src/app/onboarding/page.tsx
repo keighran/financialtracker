@@ -2,12 +2,13 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { ArrowRight, CheckCircle, Award, Target, Landmark } from 'lucide-react';
 import { fetchWithAuth } from '@/lib/api';
 
 export default function Onboarding() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -36,7 +37,7 @@ export default function Onboarding() {
     setError('');
 
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth('/api/onboarding/complete', token, {
         method: 'POST',
         body: JSON.stringify({

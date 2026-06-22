@@ -3,61 +3,57 @@ from sqlmodel import Session, select
 from app.models.models import Account, AccountType, Asset, AssetClass, Transaction, TransactionType
 
 def calculate_current_net_worth(user_id: int, db: Session) -> dict:
-    # 1. Cash accounts
-    cash_accounts = db.exec(
-        select(Account).where(Account.user_id == user_id, Account.type == AccountType.CASH)
-    ).all()
-    cash_value = sum(a.current_valuation for a in cash_accounts)
-    
-    # 2. Super accounts
-    super_accounts = db.exec(
-        select(Account).where(Account.user_id == user_id, Account.type == AccountType.SUPER)
-    ).all()
-    super_value = sum(a.current_valuation for a in super_accounts)
-    
-    # 3. Other Assets
-    other_accounts = db.exec(
-        select(Account).where(Account.user_id == user_id, Account.type == AccountType.OTHER_ASSET)
-    ).all()
-    other_value = sum(a.current_valuation for a in other_accounts)
-    
-    # 4. Property Value & Mortgages
-    property_accounts = db.exec(
-        select(Account).where(Account.user_id == user_id, Account.type == AccountType.PROPERTY)
-    ).all()
-    property_value = sum(a.current_valuation for a in property_accounts)
-    mortgage_value = sum(a.current_loan_balance for a in property_accounts)
-    
-    # 5. Liabilities
-    liabilities = db.exec(
-        select(Account).where(Account.user_id == user_id, Account.type == AccountType.LIABILITY)
-    ).all()
-    liabilities_value = sum(a.current_loan_balance for a in liabilities)
-    
-    # 6. Equities & Crypto
-    portfolio_accounts = db.exec(
-        select(Account).where(
-            Account.user_id == user_id,
-            Account.type.in_([AccountType.BROKERAGE, AccountType.CRYPTO])
-        )
-    ).all()
-    account_ids = [a.id for a in portfolio_accounts]
-    
+    # Fetch every account for the user in a single query, then bucket by type
+    # in memory (avoids six separate round-trips to the database).
+    accounts = db.exec(select(Account).where(Account.user_id == user_id)).all()
+
+    cash_value = Decimal("0.00")
+    super_value = Decimal("0.00")
+    other_value = Decimal("0.00")
+    property_value = Decimal("0.00")
+    mortgage_value = Decimal("0.00")
+    liabilities_value = Decimal("0.00")
+    portfolio_account_ids = []
+
+    for a in accounts:
+        if a.type == AccountType.CASH:
+            cash_value += a.current_valuation
+        elif a.type == AccountType.SUPER:
+            super_value += a.current_valuation
+        elif a.type == AccountType.OTHER_ASSET:
+            other_value += a.current_valuation
+        elif a.type == AccountType.PROPERTY:
+            property_value += a.current_valuation
+            mortgage_value += a.current_loan_balance
+        elif a.type == AccountType.LIABILITY:
+            liabilities_value += a.current_loan_balance
+        elif a.type in (AccountType.BROKERAGE, AccountType.CRYPTO):
+            portfolio_account_ids.append(a.id)
+
     equities_value = Decimal("0.00")
     crypto_value = Decimal("0.00")
-    
-    if account_ids:
+
+    if portfolio_account_ids:
         # Get all transactions
         txns = db.exec(
             select(Transaction)
-            .where(Transaction.account_id.in_(account_ids))
+            .where(Transaction.account_id.in_(portfolio_account_ids))
             .order_by(Transaction.date.asc())
         ).all()
-        
+
+        # Batch-load every referenced asset in one query (avoids N+1).
+        asset_ids = {t.asset_id for t in txns if t.asset_id is not None}
+        assets_by_id = {}
+        if asset_ids:
+            assets_by_id = {
+                a.id: a
+                for a in db.exec(select(Asset).where(Asset.id.in_(asset_ids))).all()
+            }
+
         # Calculate holdings
         holdings = {}
         for t in txns:
-            asset = db.get(Asset, t.asset_id)
+            asset = assets_by_id.get(t.asset_id)
             if not asset:
                 continue
             ticker = asset.ticker
@@ -72,7 +68,7 @@ def calculate_current_net_worth(user_id: int, db: Session) -> dict:
                 h["units"] += t.units
             elif t.type == TransactionType.SELL:
                 h["units"] -= t.units
-                
+
         # Total up market value
         for ticker, h in holdings.items():
             if h["units"] > 0:

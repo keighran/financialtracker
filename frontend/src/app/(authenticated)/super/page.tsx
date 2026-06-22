@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { fetchWithAuth } from '@/lib/api';
 import { ShieldAlert, Plus, Trash2, Edit3, Award } from 'lucide-react';
 
 export default function SuperLedger() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [accounts, setAccounts] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,7 +35,7 @@ export default function SuperLedger() {
     if (!user) return;
     setLoading(true);
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const accs = await fetchWithAuth('/api/ledgers/super/accounts', token);
       setAccounts(accs);
       const hist = await fetchWithAuth('/api/ledgers/super/history', token);
@@ -50,7 +51,7 @@ export default function SuperLedger() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const body = {
         name: accName,
         institution: accInstitution,
@@ -81,7 +82,7 @@ export default function SuperLedger() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const body = {
         record_date: new Date(histDate).toISOString(),
         super_setting: histSetting,
@@ -104,7 +105,7 @@ export default function SuperLedger() {
   const handleAccDelete = async (id: number) => {
     if (!user || !confirm('Are you sure you want to delete this super account?')) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth(`/api/ledgers/super/accounts/${id}`, token, {
         method: 'DELETE'
       });

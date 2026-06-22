@@ -8,8 +8,33 @@ from app.db import get_session
 from app.auth.clerk import get_current_user
 from app.models.models import User, UserSettings, MonthlySnapshot
 from app.services.aggregation import calculate_current_net_worth
+from app.services.projections import build_fire_projection
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+@router.get("/overview")
+async def get_dashboard_overview(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    """Combined dashboard payload: net-worth summary, settings and FIRE
+    projection in one request. Net worth is computed once and reused for the
+    projection (the old flow recomputed it in a separate /fire call)."""
+    settings = db.exec(select(UserSettings).where(UserSettings.user_id == current_user.id)).first()
+    net_worth_details = calculate_current_net_worth(current_user.id, db)
+    fire = build_fire_projection(current_user.id, db, net_worth_details["net_worth"])
+
+    return {
+        "summary": net_worth_details,
+        "settings": {
+            "fire_target_annual_spend": settings.fire_target_annual_spend if settings else Decimal("0.00"),
+            "fire_safe_withdrawal_rate": settings.fire_safe_withdrawal_rate if settings else Decimal("0.04"),
+            "marginal_tax_rate": settings.marginal_tax_rate if settings else Decimal("0.325"),
+            "employment_salary": settings.employment_salary if settings else Decimal("0.00")
+        },
+        "fire": fire
+    }
 
 @router.get("/net-worth")
 async def get_dashboard_net_worth(

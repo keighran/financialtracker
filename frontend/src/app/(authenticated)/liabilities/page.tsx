@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { fetchWithAuth } from '@/lib/api';
 import { ShieldAlert, Plus, Trash2, Edit3 } from 'lucide-react';
 
 export default function LiabilitiesLedger() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [liabilities, setLiabilities] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -30,7 +31,7 @@ export default function LiabilitiesLedger() {
     if (!user) return;
     setLoading(true);
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const data = await fetchWithAuth('/api/ledgers/liabilities', token);
       setLiabilities(data);
     } catch (err) {
@@ -70,7 +71,7 @@ export default function LiabilitiesLedger() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const body = {
         name,
         institution,
@@ -104,7 +105,7 @@ export default function LiabilitiesLedger() {
   const handleDelete = async (id: number) => {
     if (!user || !confirm('Are you sure you want to delete this liability?')) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth(`/api/ledgers/liabilities/${id}`, token, {
         method: 'DELETE'
       });

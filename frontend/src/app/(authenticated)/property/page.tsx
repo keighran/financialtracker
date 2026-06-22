@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { fetchWithAuth } from '@/lib/api';
 import { Home, Plus, Trash2, Edit3, HelpCircle } from 'lucide-react';
 
 export default function PropertyLedger() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [properties, setProperties] = useState<any[]>([]);
   const [gearing, setGearing] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,7 +37,7 @@ export default function PropertyLedger() {
     if (!user) return;
     setLoading(true);
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const data = await fetchWithAuth('/api/ledgers/properties', token);
       setProperties(data);
       
@@ -85,7 +86,7 @@ export default function PropertyLedger() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const body = {
         name,
         purchase_value: parseFloat(purchaseValue),
@@ -122,7 +123,7 @@ export default function PropertyLedger() {
   const handleDelete = async (id: number) => {
     if (!user || !confirm('Are you sure you want to delete this property?')) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth(`/api/ledgers/properties/${id}`, token, {
         method: 'DELETE'
       });

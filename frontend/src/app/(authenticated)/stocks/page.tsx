@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { fetchWithAuth } from '@/lib/api';
 import { Activity, Plus, Trash2 } from 'lucide-react';
 
 export default function StocksLedger() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [portfolio, setPortfolio] = useState<any[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -32,7 +33,7 @@ export default function StocksLedger() {
     if (!user) return;
     setLoading(true);
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       const allAccounts = await fetchWithAuth('/api/ledgers/cash/accounts', token);
       setAccounts(allAccounts);
       if (allAccounts.length > 0) {
@@ -68,7 +69,7 @@ export default function StocksLedger() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       let activeAccountId = accountId;
       if (!activeAccountId) {
         const defAcc = await fetchWithAuth('/api/ledgers/cash/accounts', token, {

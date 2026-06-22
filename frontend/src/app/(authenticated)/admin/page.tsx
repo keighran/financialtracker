@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { fetchWithAuth } from '@/lib/api';
 import { Settings, Users, Key, Plus, Trash2, Edit3 } from 'lucide-react';
 
 export default function AdminPortal() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const [activeTab, setActiveTab] = useState('users');
   const [usersList, setUsersList] = useState<any[]>([]);
   const [apiConfigs, setApiConfigs] = useState<any[]>([]);
@@ -39,7 +40,7 @@ export default function AdminPortal() {
     if (!user) return;
     setLoading(true);
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       if (activeTab === 'users') {
         const uData = await fetchWithAuth('/api/admin/users', token);
         setUsersList(uData);
@@ -58,7 +59,7 @@ export default function AdminPortal() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       
       if (editingUserId) {
         // Update user
@@ -83,7 +84,7 @@ export default function AdminPortal() {
     e.preventDefault();
     if (!user) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth(`/api/admin/api-configs?provider_name=${providerName}&api_url=${apiUrl}&api_key=${apiKey}&is_active=${apiActive}&description=${apiDesc}`, token, {
         method: 'POST'
       });
@@ -97,7 +98,7 @@ export default function AdminPortal() {
   const handleUserDelete = async (id: number) => {
     if (!user || !confirm('Permanently delete this user profile?')) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth(`/api/admin/users/${id}`, token, { method: 'DELETE' });
       fetchAdminData();
     } catch (err) {
@@ -108,7 +109,7 @@ export default function AdminPortal() {
   const handleConfigDelete = async (id: number) => {
     if (!user || !confirm('Delete this API pricing provider?')) return;
     try {
-      const token = await user.getToken();
+      const token = await getToken();
       await fetchWithAuth(`/api/admin/api-configs/${id}`, token, { method: 'DELETE' });
       fetchAdminData();
     } catch (err) {

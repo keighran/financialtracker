@@ -15,7 +15,18 @@ DATABASE_URL = os.getenv(
 
 # Test connection to see if postgres is online
 try:
-    engine = create_engine(DATABASE_URL, echo=False, connect_args={"connect_timeout": 2})
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        connect_args={"connect_timeout": 2},
+        # Connection pooling: reuse connections instead of opening one per request,
+        # validate them before use, and recycle stale ones (Postgres drops idle
+        # connections after a while).
+        pool_pre_ping=True,
+        pool_size=10,
+        max_overflow=20,
+        pool_recycle=1800,
+    )
     # Force a connection attempt to trigger OperationalError if offline
     with engine.connect() as conn:
         pass
